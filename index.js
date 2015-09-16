@@ -1,69 +1,136 @@
+var webdriverio = require("webdriverio");
+var seleniumStandalone = require('selenium-standalone');
 var path = require('path');
 var phantomjs = require('phantomjs');
-var seleniumStandalone = require('selenium-standalone');
-
 var phantomjsFile = phantomjs.path;
+var driverPaths = require('selenium-standalone/lib/compute-fs-paths')({
+  seleniumVersion: '2.47.1',
+  drivers: {
+    chrome: {
+      version: '2.18',
+      arch: process.arch,
+      baseURL: 'http://chromedriver.storage.googleapis.com'
+    },
+    ie: {
+      version: '2.47.0',
+      arch: process.arch,
+      baseURL: 'http://selenium-release.storage.googleapis.com'
+    }
+  }});
+
 var selenium;
 
-function startSelenium(port, done) {
+/**
+ * Boots a java child process running the Selenium Standalone server
+ * @param {Number} port Server port, defaulted to 4444 at higher level
+ * @param {Function} callback Function to run after server is creates, callback(err, child_process)
+ */
 
-    selenium = seleniumStandalone({ stdio: ['ignore', 'pipe', 'pipe'] }, ['-Dphantomjs.binary.path=' + phantomjsFile + '', '-port', port]);
+var startSelenium = function(port, callback) {
 
-    var hasRun = false;
-    ['stderr', 'stdout'].forEach(function(output) {
-        selenium[output].on('data', function (data) {
-            if (data.toString().indexOf('Started org.openqa.jetty.jetty') > -1) {
-                if (!hasRun) {
-                    hasRun = true;
-                    done();
-                }
-            }
-        });
-    });
-
+    seleniumStandalone.start({
+        spawnOptions: {
+            stdio: ['ignore', 'pipe', 'pipe']
+        },
+        seleniumArgs: [
+            '-Dphantomjs.binary.path=' + phantomjsFile + '',
+            '-port', port
+        ]
+    },
+        callback
+    );
 };
 
-function killSelenium() {
+/**
+ * Helper function to kill selenium server
+ */
+
+var killSelenium = function() {
     if (selenium) {
         selenium.kill();
-        delete selenium;
         selenium = null;
     } else {
         console.log("ERR> Selenium not started");
     }
-}
+};
 
-module.exports = function(options) {
 
-    options = options || { autostop: false, port: 4444 };
+/**
+ * Gets the desiredCapabilities object for webdriver instantiation, currently only for chrome and phantomjs
+ * @param {string} browserName
+ * @return {Object} desired capabilities, formatted for use by webdriver.io
+ */
+var getDesiredCapabilities = function(browserName) {
+    if (browserName === 'chrome') {
+        return {
+            browserName: 'chrome'
+            // 'chromeOptions.binary': driverPaths.chrome.installPath
+        };
+    }
+    if (browserName === 'phantomjs') {
+        return {
+            browserName: 'phantomjs',
+            phantomjs: {
+                binary: {
+                    path: phantomjsFile
+                }
+            }
+        };
+    }
+};
 
-    return function () {
+/**
+ * Setups function to initiate selenium server and webdriver client
+ * @param {Object} options, include port, autostop, browserName
+ * @param {Function} callback, runs after server and client are created. Provided the Webdriver client
+ */
+var setup = function(opts, callback) {
 
-        var self = this;
+    // Pull together our options, use defaults if necessary
+    var port = opts.port || 4444;
+    var autostop = opts.autostop || false;
 
-        this.addCommand('_init', this.init);
+    // browserName is required, throw error if not present
+    if (!opts.browserName) {
+        throw "browserName is a required option";
+    }
+    var desiredCapabilities = getDesiredCapabilities(opts.browserName);
 
-        this.addCommand('stopSelenium', function(cb) {
-            killSelenium();
-            cb();
+    // Install any outstanding selenium drivers
+    seleniumStandalone.install({}, function() {
+
+        // Create the Webdriver client
+        var client = webdriverio.remote({
+            desiredCapabilities: desiredCapabilities,
+            port: port
         });
 
-        this.addCommand("init", function(cb) {
+        // Re-map init command to _init
+        client.addCommand("_init", client.init);
+
+        // Add a hook to the init command to start selenium if it is not running
+        client.addCommand("init", function(cb) {
             if (!selenium) {
-                startSelenium(options.port, function() {
-                    self._init().call(cb);
+                startSelenium(port, function(err, server) {
+                    selenium = server;
+                    client._init().call(cb);
                 });
             } else {
-                self._init().call(cb);
+                client._init().call(cb);
             }
         });
 
-        if (options.autostop) {
 
-            this.addCommand('_end', this.end);
-            this.addCommand("end", function(cb) {
+        // If we're using auto-stop, we want to kill the server on .end()
+        if (autostop) {
+
+            // Re-map end command to _end
+            client.addCommand('_end', client.end);
+
+            // Add a hook to the end command to kill selenium if it is running
+            client.addCommand("end", function(cb) {
                 if (selenium) {
-                    self._end().call(function(cb) {
+                    client._end().call(function(cb) {
                         killSelenium();
                         if (typeof cb == "function") {
                             cb();
@@ -71,12 +138,19 @@ module.exports = function(options) {
                     });
 
                 } else {
-                    self._end.call(cb);
+                    client._end.call(cb);
                 }
             });
 
         }
 
-    }
+        // Send our Webdriver client to our callback
+        callback(client);
 
-}
+    });
+};
+
+
+module.exports = {
+    setup: setup
+};

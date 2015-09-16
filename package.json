@@ -15,9 +15,8 @@
   "author": "Camilo Tapia <camilo.tapia@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "webdriverio": "^2.1.0",
-    "selenium-standalone": "~2.40.0-2.9.0",
-    "selenium-standalone": "~2.43.1-2.9.0-1",
+    "webdriverio": "^2.4.5",
+    "selenium-standalone": "4.6.0",
     "phantomjs": "~1.9.7-1"
   }
 }
