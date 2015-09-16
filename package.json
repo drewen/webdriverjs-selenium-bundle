@@ -17,6 +17,7 @@
   "dependencies": {
     "webdriverio": "^2.1.0",
     "selenium-standalone": "~2.40.0-2.9.0",
+    "selenium-standalone": "~2.43.1-2.9.0-1",
     "phantomjs": "~1.9.7-1"
   }
 }
